@@ -9,6 +9,8 @@ import (
 	"maps"
 	"net/http"
 	"time"
+	"github.com/pocketbase/pocketbase/tools/types"
+	"google.golang.org/api/idtoken"
 
 	validation "github.com/go-ozzo/ozzo-validation/v4"
 	"github.com/pocketbase/dbx"
@@ -68,24 +70,56 @@ func recordAuthWithOAuth2(e *core.RequestEvent) error {
 	defer cancel()
 
 	provider.SetContext(ctx)
-	provider.SetRedirectURL(form.RedirectURL)
+	var authUser *auth.AuthUser
+	if form.Provider == "google" && form.RedirectUrl == "Jwt" {
+		payload, err := idtoken.Validate(context.Background(), form.Code, provider.ClientId())
+		if err != nil {
+			return firstApiError(err, e.BadRequestError("Token validation failed.", err))
+		}
+		expiry, err := types.ParseDateTime(payload.Expires)
+		if err != nil {
+			return firstApiError(err, e.BadRequestError("Expiry check failed.", err))
+		}
+		authUser = &auth.AuthUser{
+			Id:           payload.Claims["sub"].(string),
+			Name:         payload.Claims["name"].(string),
+			Email:        payload.Claims["email"].(string),
+			AvatarUrl:    payload.Claims["picture"].(string),
+			Username:     "",
+			AccessToken:  "",
+			RefreshToken: "",
+			Expiry:       expiry,
+			RawUser: map[string]any{
+				"email":          payload.Claims["email"],
+				"family_name":    payload.Claims["family_name"],
+				"given_name":     payload.Claims["given_name"],
+				"id":             payload.Claims["sub"],
+				"locale":         payload.Claims["locale"],
+				"name":           payload.Claims["name"],
+				"picture":        payload.Claims["picture"],
+				"verified_email": payload.Claims["email_verified"],
+			},
+		}
+	} else {
+		provider.SetRedirectURL(form.RedirectURL)
 
-	var opts []oauth2.AuthCodeOption
+		var opts []oauth2.AuthCodeOption
 
-	if provider.PKCE() {
-		opts = append(opts, oauth2.SetAuthURLParam("code_verifier", form.CodeVerifier))
-	}
+		if provider.PKCE() {
+			opts = append(opts, oauth2.SetAuthURLParam("code_verifier", form.CodeVerifier))
+		}
 
-	// fetch token
-	token, err := provider.FetchToken(form.Code, opts...)
-	if err != nil {
-		return firstApiError(err, e.BadRequestError("Failed to fetch OAuth2 token.", err))
-	}
+		// fetch token
+		token, err := provider.FetchToken(form.Code, opts...)
+		if err != nil {
+			return firstApiError(err, e.BadRequestError("Failed to fetch OAuth2 token.", err))
+		}
 
-	// fetch external auth user
-	authUser, err := provider.FetchAuthUser(token)
-	if err != nil {
-		return firstApiError(err, e.BadRequestError("Failed to fetch OAuth2 user.", err))
+		// fetch external auth user
+		authUser, err = provider.FetchAuthUser(token)
+		if err != nil {
+			return firstApiError(err, e.BadRequestError("Failed to fetch OAuth2 user.", err))
+		}
 	}
 
 	var authRecord *core.Record

@@ -1,0 +1,30 @@
+name: package
+
+on:
+  push:
+    branches:
+      - auth
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v2
+
+    - name: Setup Go
+      uses: actions/setup-go@v2
+      with:
+        go-version: 1.21
+
+    - name: Build
+      run: |
+        cd examples/base
+        GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build
+
+    - name: Publish
+      uses: actions/upload-artifact@v4
+      with:
+        name: pocketbase
+        path: examples/base/base

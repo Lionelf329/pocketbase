@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/pocketbase/pocketbase/tools/types"
+	"google.golang.org/api/idtoken"
 	"time"
 
 	validation "github.com/go-ozzo/ozzo-validation/v4"
@@ -140,24 +142,56 @@ func (form *RecordOAuth2Login) Submit(
 		return nil, nil, err
 	}
 
-	provider.SetRedirectUrl(form.RedirectUrl)
+	var authUser *auth.AuthUser
+	if form.Provider == "google" && form.RedirectUrl == "Jwt" {
+		payload, err := idtoken.Validate(context.Background(), form.Code, provider.ClientId())
+		if err != nil {
+			return nil, nil, err
+		}
+		expiry, err := types.ParseDateTime(payload.Expires)
+		if err != nil {
+			return nil, nil, err
+		}
+		authUser = &auth.AuthUser{
+			Id:           payload.Claims["sub"].(string),
+			Name:         payload.Claims["name"].(string),
+			Email:        payload.Claims["email"].(string),
+			AvatarUrl:    payload.Claims["picture"].(string),
+			Username:     "",
+			AccessToken:  "",
+			RefreshToken: "",
+			Expiry:       expiry,
+			RawUser: map[string]any{
+				"email":          payload.Claims["email"],
+				"family_name":    payload.Claims["family_name"],
+				"given_name":     payload.Claims["given_name"],
+				"id":             payload.Claims["sub"],
+				"locale":         payload.Claims["locale"],
+				"name":           payload.Claims["name"],
+				"picture":        payload.Claims["picture"],
+				"verified_email": payload.Claims["email_verified"],
+			},
+		}
+	} else {
+		provider.SetRedirectUrl(form.RedirectUrl)
 
-	var opts []oauth2.AuthCodeOption
+		var opts []oauth2.AuthCodeOption
 
-	if provider.PKCE() {
-		opts = append(opts, oauth2.SetAuthURLParam("code_verifier", form.CodeVerifier))
-	}
+		if provider.PKCE() {
+			opts = append(opts, oauth2.SetAuthURLParam("code_verifier", form.CodeVerifier))
+		}
 
-	// fetch token
-	token, err := provider.FetchToken(form.Code, opts...)
-	if err != nil {
-		return nil, nil, err
-	}
+		// fetch token
+		token, err := provider.FetchToken(form.Code, opts...)
+		if err != nil {
+			return nil, nil, err
+		}
 
-	// fetch external auth user
-	authUser, err := provider.FetchAuthUser(token)
-	if err != nil {
-		return nil, nil, err
+		// fetch external auth user
+		authUser, err = provider.FetchAuthUser(token)
+		if err != nil {
+			return nil, nil, err
+		}
 	}
 
 	var authRecord *models.Record
